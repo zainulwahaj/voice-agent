@@ -1,0 +1,28 @@
+{
+  "name": "voice-agent-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "setup-integration": "node setup-integration.js",
+    "test-integration": "node test-integration.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.2",
+    "@openai/agents-realtime": "^0.1.6",
+    "buffer": "^6.0.3",
+    "dotenv": "^16.4.5",
+    "google-auth-library": "^10.3.1",
+    "googleapis": "^160.0.0",
+    "process": "^0.11.10",
+    "util": "^0.12.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vite": "^7.1.7"
+  }
+}

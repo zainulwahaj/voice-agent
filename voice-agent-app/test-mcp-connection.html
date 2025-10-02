@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP Connection Test</title>
+</head>
+<body>
+    <h1>MCP Connection Test</h1>
+    <button onclick="testConnection()">Test MCP Connection</button>
+    <div id="result"></div>
+
+    <script>
+        async function testConnection() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing...';
+            
+            try {
+                // Test health endpoint
+                const healthResponse = await fetch('http://localhost:3000/health');
+                const healthData = await healthResponse.json();
+                resultDiv.innerHTML += `<p>✅ Health Check: ${JSON.stringify(healthData)}</p>`;
+                
+                // Test MCP tools endpoint
+                const toolsResponse = await fetch('http://localhost:3000/mcp/tools/call', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json, text/event-stream',
+                    },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0",
+                        method: "tools/call",
+                        params: {
+                            name: 'list-calendars',
+                            arguments: {}
+                        },
+                        id: 1
+                    })
+                });
+                
+                if (toolsResponse.ok) {
+                    const responseText = await toolsResponse.text();
+                    // Handle SSE format
+                    if (responseText.startsWith('event: ')) {
+                        const lines = responseText.split('\n');
+                        let jsonData = null;
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    jsonData = JSON.parse(line.substring(6));
+                                    break;
+                                } catch (e) {
+                                    // Continue looking for valid JSON
+                                }
+                            }
+                        }
+                        if (jsonData) {
+                            resultDiv.innerHTML += `<p>✅ MCP Tools: ${JSON.stringify(jsonData)}</p>`;
+                        } else {
+                            resultDiv.innerHTML += `<p>✅ MCP Tools (SSE): ${responseText}</p>`;
+                        }
+                    } else {
+                        // Handle regular JSON response
+                        try {
+                            const toolsData = JSON.parse(responseText);
+                            resultDiv.innerHTML += `<p>✅ MCP Tools: ${JSON.stringify(toolsData)}</p>`;
+                        } catch (e) {
+                            resultDiv.innerHTML += `<p>✅ MCP Tools (Raw): ${responseText}</p>`;
+                        }
+                    }
+                } else {
+                    resultDiv.innerHTML += `<p>❌ MCP Tools Error: ${toolsResponse.status} ${toolsResponse.statusText}</p>`;
+                    const errorText = await toolsResponse.text();
+                    resultDiv.innerHTML += `<p>Error Details: ${errorText}</p>`;
+                }
+                
+            } catch (error) {
+                resultDiv.innerHTML += `<p>❌ Connection Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>

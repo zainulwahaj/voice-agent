@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Calendar Assistant</title>
+  </head>
+  <body>
+    <div id="app">
+      <div class="container">
+        <header class="header">
+          <h1>📅 Calendar Assistant</h1>
+          <div class="status" id="status">Ready to connect</div>
+        </header>
+        
+        <div class="main-content">
+          <div class="control-panel">
+            <div class="controls">
+              <button id="connect-btn" class="btn btn-primary">Connect</button>
+              <button id="disconnect-btn" class="btn btn-secondary" disabled>Disconnect</button>
+        <button id="mcp-connect-btn" class="btn btn-mcp" disabled>MCP Integrated</button>
+        <button id="google-auth-btn" class="btn btn-google">Legacy Google Auth</button>
+            </div>
+            <div class="api-key-section">
+              <label for="api-key">OpenAI API Key:</label>
+              <div class="input-group">
+                <input type="password" id="api-key" placeholder="sk-proj-..." />
+                <button id="clear-key-btn" class="btn btn-clear" title="Clear saved API key">✕</button>
+              </div>
+              <small>Enter your OpenAI API key. We'll automatically generate a secure ephemeral key for voice conversations.</small>
+            </div>
+          </div>
+          
+          <div class="conversation-panel">
+            <div class="conversation-header">
+              <h3>Live Conversation Transcript</h3>
+              <div class="conversation-controls">
+                <button id="test-transcript-btn" class="btn btn-small">Test Transcript</button>
+                <button id="test-mic-btn" class="btn btn-small">Test Mic</button>
+            <button id="test-calendar-btn" class="btn btn-small">Test Calendar</button>
+            <button id="create-event-btn" class="btn btn-small">Create Test Event</button>
+            <button id="debug-session-btn" class="btn btn-small">Debug Session</button>
+                <button id="test-voice-events-btn" class="btn btn-small">Test Voice Events</button>
+                <button id="test-session-audio-btn" class="btn btn-small">Test Session Audio</button>
+                <button id="clear-transcript-btn" class="btn btn-small">Clear Transcript</button>
+                <button id="toggle-auto-scroll-btn" class="btn btn-small btn-active">Auto Scroll</button>
+              </div>
+            </div>
+            <div class="conversation" id="conversation">
+              <div class="conversation-item assistant welcome">
+                <div class="message-header">
+                  <span class="sender">Calendar Assistant</span>
+                  <span class="timestamp" id="welcome-timestamp"></span>
+                </div>
+                <div class="message-content">Welcome! I'm your calendar assistant. I can help you with:
+                <br>• Viewing your calendar events
+                <br>• Creating new appointments and meetings
+                <br>• Checking your availability
+                <br>• Managing your schedule
+                <br><br>Connect to Google Calendar and enter your OpenAI API key to start!</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
