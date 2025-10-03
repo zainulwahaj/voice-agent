@@ -17,26 +17,50 @@ let mcpTools: any[] = []
 let isConnected = false
 
 /**
- * Fetch available tools from MCP server
+ * Fetch available tools from MCP server using proper MCP protocol
+ * Handles Server-Sent Events (SSE) format response
  */
 async function fetchMcpTools(): Promise<any[]> {
   try {
-    console.log('📡 Fetching MCP tools...')
+    console.log('📡 Fetching MCP tools via MCP protocol...')
     
-    const response = await fetch(`${MCP_SERVER_URL}/tools`, {
-      method: 'GET',
+    // Send MCP protocol message to list tools
+    const response = await fetch(MCP_SERVER_URL, {
+      method: 'POST',
       headers: {
         'Accept': 'application/json, text/event-stream',
         'Content-Type': 'application/json'
-      }
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {}
+      })
     })
 
     if (!response.ok) {
       throw new Error(`MCP tools fetch failed: ${response.status} ${response.statusText}`)
     }
 
-    const data = await response.json()
-    const tools = data.tools || []
+    // Get response as text to handle SSE format
+    const text = await response.text()
+    
+    // Parse SSE format: "data: {...}\n\n"
+    let jsonData = ''
+    const lines = text.split('\n')
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        jsonData += line.substring(6)
+      }
+    }
+    
+    if (!jsonData) {
+      throw new Error('No data in SSE response')
+    }
+    
+    const data = JSON.parse(jsonData)
+    const tools = data.result?.tools || []
 
     console.log(`✅ Fetched ${tools.length} tools from MCP server`)
     
@@ -54,19 +78,22 @@ async function fetchMcpTools(): Promise<any[]> {
 }
 
 /**
- * Call MCP server to execute a tool
+ * Call MCP server to execute a tool using proper MCP protocol
+ * Handles Server-Sent Events (SSE) format response
  */
 async function callMcpTool(toolName: string, args: any): Promise<any> {
   try {
     console.log(`🔧 Calling MCP tool: ${toolName}`, args)
 
-    const response = await fetch(`${MCP_SERVER_URL}/call-tool`, {
+    const response = await fetch(MCP_SERVER_URL, {
       method: 'POST',
       headers: {
-        'Accept': 'application/json',
+        'Accept': 'application/json, text/event-stream',
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
         method: 'tools/call',
         params: {
           name: toolName,
@@ -79,7 +106,28 @@ async function callMcpTool(toolName: string, args: any): Promise<any> {
       throw new Error(`MCP tool call failed: ${response.status}`)
     }
 
-    const result = await response.json()
+    // Get response as text to handle SSE format
+    const text = await response.text()
+    console.log('📡 Raw SSE response:', text.substring(0, 500)) // Show first 500 chars
+    
+    // Parse SSE format: "data: {...}\n\n"
+    let jsonData = ''
+    const lines = text.split('\n')
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        jsonData += line.substring(6)
+      }
+    }
+    
+    if (!jsonData) {
+      throw new Error('No data in SSE response')
+    }
+    
+    console.log('📋 Extracted JSON data:', jsonData.substring(0, 500))
+    const data = JSON.parse(jsonData)
+    console.log('📦 Parsed data object:', data)
+    const result = data.result
+    
     console.log(`✅ MCP tool result:`, result)
 
     return result
@@ -218,14 +266,50 @@ function setupEventHandlers() {
     const { call_id, name, arguments: argsString } = event
     
     console.log('🔧 Function call complete:', name)
+    console.log('📋 Arguments:', argsString)
     updateStatus('processing', `Calling ${name}...`)
+    
+    // Show in UI that we're calling a tool
+    addMessage('system', `🔧 Calling tool: ${name}`)
 
     try {
       // Parse arguments
       const args = JSON.parse(argsString)
+      console.log('📋 Parsed arguments:', args)
+      
+      // Fix date formats - MCP requires ISO 8601 without milliseconds (YYYY-MM-DDTHH:MM:SS)
+      const fixedArgs = { ...args }
+      
+      // Helper function to convert date to MCP format
+      const fixDateFormat = (dateStr: string): string => {
+        if (!dateStr) return dateStr
+        // Remove milliseconds if present (.###) and remove timezone (Z or +00:00)
+        return dateStr
+          .replace(/\.\d+Z?$/, '')  // Remove .123Z or .123
+          .replace(/Z$/, '')         // Remove trailing Z
+          .replace(/[+-]\d{2}:\d{2}$/, '') // Remove timezone like +05:00
+      }
+      
+      if (fixedArgs.timeMin) {
+        fixedArgs.timeMin = fixDateFormat(fixedArgs.timeMin)
+      }
+      if (fixedArgs.timeMax) {
+        fixedArgs.timeMax = fixDateFormat(fixedArgs.timeMax)
+      }
+      if (fixedArgs.start && typeof fixedArgs.start === 'object' && fixedArgs.start.dateTime) {
+        fixedArgs.start.dateTime = fixDateFormat(fixedArgs.start.dateTime)
+      }
+      if (fixedArgs.end && typeof fixedArgs.end === 'object' && fixedArgs.end.dateTime) {
+        fixedArgs.end.dateTime = fixDateFormat(fixedArgs.end.dateTime)
+      }
+      console.log('🔧 Fixed arguments for MCP:', fixedArgs)
       
       // Call MCP server
-      const result = await callMcpTool(name, args)
+      const result = await callMcpTool(name, fixedArgs)
+      console.log('📦 MCP Result:', result)
+      
+      // Show tool result in UI
+      addMessage('system', `✅ Tool ${name} completed`)
       
       // Send result back to OpenAI
       realtimeClient!.send({
@@ -324,7 +408,7 @@ function updateStatus(state: string, message: string) {
 /**
  * Add message to conversation UI
  */
-function addMessage(role: 'user' | 'assistant', content: string) {
+function addMessage(role: 'user' | 'assistant' | 'system', content: string) {
   const messagesDiv = document.getElementById('messages')
   if (!messagesDiv) return
 
@@ -332,7 +416,7 @@ function addMessage(role: 'user' | 'assistant', content: string) {
   messageEl.className = `message ${role}`
   
   const roleEl = document.createElement('strong')
-  roleEl.textContent = role === 'user' ? 'You: ' : 'Assistant: '
+  roleEl.textContent = role === 'user' ? 'You: ' : role === 'assistant' ? 'Assistant: ' : 'System: '
   
   const contentEl = document.createElement('span')
   contentEl.textContent = content
@@ -368,20 +452,27 @@ async function testMcpConnection() {
 }
 
 /**
- * Test list events
+ * Test list events using proper MCP protocol
  */
 async function testListEvents() {
   try {
     updateStatus('testing', 'Fetching calendar events...')
     
+    // Fix date format for MCP (remove milliseconds and timezone)
+    const now = new Date().toISOString()
+      .replace(/\.\d+Z?$/, '')  // Remove .123Z or .123
+      .replace(/Z$/, '')         // Remove trailing Z
+    
     const result = await callMcpTool('list-events', {
       calendarId: 'primary',
-      timeMin: new Date().toISOString(),
+      timeMin: now,
       maxResults: 10
     })
 
     console.log('Calendar events:', result)
-    alert(`✅ Calendar Events Retrieved!\n\nSee console for full results`)
+    
+    const eventCount = result.content?.[0]?.text ? 'See console for results' : 'No events found'
+    alert(`✅ Calendar Events Retrieved!\n\n${eventCount}`)
     updateStatus('ready', 'Test complete')
   } catch (error) {
     alert(`❌ Failed to list events:\n${error}`)
