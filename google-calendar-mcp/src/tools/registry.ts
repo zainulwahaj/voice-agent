@@ -15,6 +15,7 @@ import { UpdateEventHandler } from "../handlers/core/UpdateEventHandler.js";
 import { DeleteEventHandler } from "../handlers/core/DeleteEventHandler.js";
 import { FreeBusyEventHandler } from "../handlers/core/FreeBusyEventHandler.js";
 import { GetCurrentTimeHandler } from "../handlers/core/GetCurrentTimeHandler.js";
+import { CreateAppointmentHandler } from "../handlers/core/CreateAppointmentHandler.js";
 
 // Define all tool schemas with TypeScript inference
 export const ToolSchemas = {
@@ -405,6 +406,21 @@ export const ToolSchemas = {
     timeZone: z.string().optional().describe(
       "Optional IANA timezone (e.g., 'America/Los_Angeles', 'Europe/London', 'UTC'). If not provided, returns UTC time and system timezone for reference."
     )
+  }),
+  'create-appointment': z.object({
+    calendarId: z.string().describe("ID of the calendar (use 'primary')"),
+    patientName: z.string().min(2).describe("Patient full name"),
+    dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Date of birth YYYY-MM-DD"),
+    reason: z.string().min(3).describe("Reason for appointment"),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Appointment date YYYY-MM-DD"),
+    time: z.string().regex(/^\d{2}:\d{2}$/).describe("Appointment start time HH:MM 24h"),
+    durationMins: z.number().int().min(15).max(480).optional().describe("Duration in minutes (default 30)"),
+    provider: z.string().optional().describe("Assigned doctor/provider"),
+    location: z.string().optional().describe("Clinic/location"),
+    notes: z.string().optional().describe("Additional notes"),
+    contactPhone: z.string().optional().describe("Patient phone"),
+    contactEmail: z.string().email().optional().describe("Patient email"),
+    timeZone: z.string().optional().describe("IANA timezone for local parsing when time is naive")
   })
 } as const;
 
@@ -572,6 +588,12 @@ export class ToolRegistry {
       description: "Get current system time and timezone information.",
       schema: ToolSchemas['get-current-time'],
       handler: GetCurrentTimeHandler
+    },
+    {
+      name: "create-appointment",
+      description: "Create a hospital patient appointment and log it to JSONL.",
+      schema: ToolSchemas['create-appointment'],
+      handler: CreateAppointmentHandler
     }
   ];
 

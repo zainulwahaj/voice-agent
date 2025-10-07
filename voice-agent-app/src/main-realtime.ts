@@ -15,6 +15,104 @@ const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || ''
 let realtimeClient: RealtimeAPIClient | null = null
 let mcpTools: any[] = []
 let isConnected = false
+type IntakeStage = 'idle' | 'collecting' | 'confirm' | 'creating'
+let intakeStage: IntakeStage = 'idle'
+let intakeData: any = {}
+
+function resetIntake() {
+  intakeStage = 'idle'
+  intakeData = {}
+  updateStatus('ready', 'Ready to listen')
+}
+
+function showIntakeStatus() {
+  const required = ['patientName','dob','reason','date','time']
+  const missing = required.filter(k => !intakeData[k])
+  const msg = missing.length ? `collecting: missing ${missing.join(', ')}` : 'confirming details'
+  addMessage('system', `📝 Intake status → ${msg}`)
+}
+
+function askNextMissingField() {
+  const order = [
+    { key: 'patientName', prompt: 'What is the patient\'s full name?' },
+    { key: 'dob', prompt: 'What is the date of birth? Use YYYY-MM-DD.' },
+    { key: 'reason', prompt: 'What is the reason for the appointment?' },
+    { key: 'date', prompt: 'What date? Use YYYY-MM-DD.' },
+    { key: 'time', prompt: 'What time? Use 24h HH:MM.' },
+  ]
+  for (const f of order) {
+    if (!intakeData[f.key]) {
+      addMessage('assistant', f.prompt)
+      return
+    }
+  }
+  intakeStage = 'confirm'
+  const summary = `Confirm appointment:\nPatient: ${intakeData.patientName}\nDOB: ${intakeData.dob}\nReason: ${intakeData.reason}\nWhen: ${intakeData.date} ${intakeData.time}${intakeData.provider ? `\nProvider: ${intakeData.provider}`: ''}${intakeData.location ? `\nLocation: ${intakeData.location}`: ''}`
+  addMessage('assistant', `${summary}\nIs this correct? (yes/no)`)
+}
+
+function tryFillFieldFromTranscript(text: string) {
+  const t = text.trim()
+  if (!intakeData.patientName && /name is\s+(.+)/i.test(t)) {
+    intakeData.patientName = t.match(/name is\s+(.+)/i)![1].trim()
+  } else if (!intakeData.patientName && /my name\s+is\s+(.+)/i.test(t)) {
+    intakeData.patientName = t.match(/my name\s+is\s+(.+)/i)![1].trim()
+  }
+  if (!intakeData.dob && /(\d{4}-\d{2}-\d{2})/.test(t)) {
+    intakeData.dob = t.match(/(\d{4}-\d{2}-\d{2})/)![1]
+  }
+  if (!intakeData.time && /(\d{2}:\d{2})/.test(t)) {
+    intakeData.time = t.match(/(\d{2}:\d{2})/)![1]
+  }
+  if (!intakeData.date && /(\d{4}-\d{2}-\d{2})/.test(t)) {
+    // prefer first date-like token as date if dob already set
+    const matches = t.match(/(\d{4}-\d{2}-\d{2})/g)
+    if (matches) {
+      intakeData.date = intakeData.dob && matches[0] === intakeData.dob && matches[1] ? matches[1] : matches[0]
+    }
+  }
+}
+
+function normalizeOptionalShortcuts(text: string) {
+  if (/tomorrow/i.test(text)) {
+    const d = new Date(Date.now()+24*60*60*1000)
+    intakeData.date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  }
+  if (/today/i.test(text)) {
+    const d = new Date()
+    intakeData.date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  }
+}
+
+async function createAppointmentNow() {
+  intakeStage = 'creating'
+  updateStatus('processing', 'Creating appointment...')
+  const payload = {
+    calendarId: 'primary',
+    patientName: intakeData.patientName,
+    dob: intakeData.dob,
+    reason: intakeData.reason,
+    date: intakeData.date,
+    time: intakeData.time,
+    durationMins: intakeData.durationMins || 30,
+    provider: intakeData.provider,
+    location: intakeData.location,
+    notes: intakeData.notes,
+    contactPhone: intakeData.contactPhone,
+    contactEmail: intakeData.contactEmail
+  }
+  try {
+    const result = await callMcpTool('create-appointment', payload)
+    const text = result?.content?.[0]?.text || 'Appointment created.'
+    addMessage('assistant', text)
+    updateStatus('ready', 'Appointment created')
+    resetIntake()
+  } catch (e:any) {
+    addMessage('assistant', `Failed to create appointment: ${e?.message || e}`)
+    updateStatus('error', 'Create failed')
+    intakeStage = 'confirm'
+  }
+}
 
 /**
  * Fetch available tools from MCP server using proper MCP protocol
@@ -161,18 +259,28 @@ async function initializeAgent() {
       apiKey: OPENAI_API_KEY,
       model: 'gpt-4o-realtime-preview-2024-10-01',
       voice: 'alloy',
-      instructions: `You are a helpful voice assistant with access to Google Calendar.
+      instructions: `You are a hospital appointment assistant.
 
-You can help users with their calendar by:
-- Viewing upcoming events
-- Creating new events
-- Updating existing events
-- Deleting events
-- Checking free/busy times
-- Searching for specific events
+GOAL: Schedule patient appointments professionally. Collect and validate required details before creating.
 
-When users ask about their calendar, use the available tools to help them.
-Be conversational and natural. Confirm actions before making changes.`,
+REQUIRED FIELDS:
+- patientName (full name)
+- dob (YYYY-MM-DD)
+- reason (chief complaint/visit reason)
+- date (YYYY-MM-DD)
+- time (HH:MM 24h)
+
+OPTIONAL FIELDS:
+- durationMins (default 30)
+- provider, location, notes, contactPhone, contactEmail
+
+BEHAVIOR:
+1) If any required fields are missing, ask concise follow-ups to collect them.
+2) Validate DOB and date format (YYYY-MM-DD) and time (HH:MM). If invalid, ask again.
+3) When all required fields present, read back a short summary and ask for confirmation (yes/no).
+4) After confirmation, create the appointment via tool and return the link. Put collected details in the event description.
+5) Never hallucinate calendar data; use tools or say you don't know.
+6) Keep questions short and one at a time.`,
       tools: mcpTools
     })
 
@@ -225,6 +333,34 @@ function setupEventHandlers() {
     const transcript = event.transcript
     console.log('📝 User said:', transcript)
     addMessage('user', transcript)
+    // Intake handling
+    if (/start (appointment|intake)/i.test(transcript) && intakeStage === 'idle') {
+      intakeStage = 'collecting'
+      addMessage('assistant', 'Okay, let\'s schedule a patient appointment.')
+      showIntakeStatus()
+      askNextMissingField()
+      return
+    }
+
+    if (intakeStage === 'collecting') {
+      normalizeOptionalShortcuts(transcript)
+      tryFillFieldFromTranscript(transcript)
+      showIntakeStatus()
+      askNextMissingField()
+      return
+    }
+
+    if (intakeStage === 'confirm') {
+      if (/^(yes|yep|correct|confirm)/i.test(transcript)) {
+        createAppointmentNow()
+        return
+      } else if (/^(no|nope|change|edit)/i.test(transcript)) {
+        intakeStage = 'collecting'
+        addMessage('assistant', 'No problem. Which detail would you like to change? Name, DOB, reason, date, or time?')
+        return
+      }
+    }
+
     updateStatus('processing', 'Thinking...')
   })
 
@@ -502,6 +638,18 @@ function setupUI() {
   const startButton = document.getElementById('start-button')
   if (startButton) {
     startButton.addEventListener('click', startConversation)
+  }
+
+  // Start intake button
+  const startIntake = document.getElementById('start-intake')
+  if (startIntake) {
+    startIntake.addEventListener('click', () => {
+      intakeStage = 'collecting'
+      intakeData = {}
+      addMessage('assistant', 'Starting hospital appointment intake.')
+      showIntakeStatus()
+      askNextMissingField()
+    })
   }
 
   // Stop button
